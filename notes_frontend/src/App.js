@@ -1,49 +1,123 @@
-import React, { useState, useEffect } from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useMemo, useState } from "react";
+import "./App.css";
+import NoteForm from "./components/NoteForm";
+import NoteList from "./components/NoteList";
+import { loadNotes, saveNotes } from "./utils/storage";
 
-// PUBLIC_INTERFACE
-function App() {
-  const [theme, setTheme] = useState('light');
+function makeId() {
+  // No dependency on crypto; stable enough for local notes.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
-  // Effect to apply theme to document element
+function sortByUpdatedDesc(a, b) {
+  return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * App shell for Simple Notes (localStorage-backed).
+ */
+export default function App() {
+  const [notes, setNotes] = useState(() => loadNotes());
+  const [editingId, setEditingId] = useState(null);
+  const [statusMessage, setStatusMessage] = useState("");
+
+  const editingNote = useMemo(() => notes.find((n) => n.id === editingId) ?? null, [notes, editingId]);
+
+  const sortedNotes = useMemo(() => {
+    return [...notes].sort(sortByUpdatedDesc);
+  }, [notes]);
+
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+    // Persist on any change.
+    saveNotes(notes);
+  }, [notes]);
 
-  // PUBLIC_INTERFACE
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
+  function announce(message) {
+    // Updating state is enough for aria-live; keep it short.
+    setStatusMessage(message);
+  }
+
+  function handleSave({ title, body }) {
+    const nowIso = new Date().toISOString();
+
+    setNotes((prev) => {
+      if (editingId) {
+        const next = prev.map((n) =>
+          n.id === editingId
+            ? {
+                ...n,
+                title,
+                body,
+                updatedAt: nowIso,
+              }
+            : n
+        );
+        return next;
+      }
+
+      const newNote = {
+        id: makeId(),
+        title,
+        body,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      return [newNote, ...prev];
+    });
+
+    if (editingId) {
+      announce("Note updated.");
+    } else {
+      announce("Note added.");
+    }
+    setEditingId(null);
+  }
+
+  function handleCancel() {
+    setEditingId(null);
+    announce("Edit canceled.");
+  }
+
+  function handleEdit(note) {
+    setEditingId(note.id);
+    announce(`Editing note: ${note.title}`);
+  }
+
+  function handleDelete(note) {
+    const ok = window.confirm(`Delete "${note.title}"? This cannot be undone.`);
+    if (!ok) return;
+
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+
+    if (editingId === note.id) setEditingId(null);
+
+    announce("Note deleted.");
+  }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <button 
-          className="theme-toggle" 
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
-        </button>
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <p>
-          Current theme: <strong>{theme}</strong>
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="appRoot">
+      <div className="appFrame">
+        <div className="grain" aria-hidden="true" />
+
+        <main className="container">
+          <div className="srOnly" aria-live="polite" aria-atomic="true">
+            {statusMessage}
+          </div>
+
+          <NoteForm editingNote={editingNote} onSave={handleSave} onCancel={handleCancel} />
+          <NoteList
+            notes={sortedNotes}
+            activeNoteId={editingId}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+          />
+
+          <footer className="footer">
+            <span className="footerText">Retro notes — local only, no backend.</span>
+          </footer>
+        </main>
+      </div>
     </div>
   );
 }
-
-export default App;
